@@ -9,7 +9,6 @@ import tempfile
 import webbrowser
 import threading
 from contextlib import suppress
-from timeout_decorator.timeout_decorator import TimeoutError
 from . import utils
 from . import engines
 from . import messages
@@ -76,11 +75,10 @@ class ChainExecution:
 
         def get_permission():
             self.su = False
-            if 'root' in self.adb('shell id'):
+            if self.ROOT in self.adb.adb_out('id'):
                 self.permisson = self.ROOT
                 return self.permisson
-            try_su = self.adb('shell id', su=True)
-            if try_su is not None and self.ROOT in try_su:
+            if self.ROOT in self.adb.adb_out('id', su=True):
                 self.permisson = self.ROOTSU
                 self.su = True
             else:
@@ -109,7 +107,7 @@ class ChainExecution:
 
         # Build Props
         with suppress(TimeoutError):
-            build_prop = self.adb('shell cat /system/build.prop', su=self.su, timeout=5)
+            build_prop = self.adb.adb_out('cat /system/build.prop', su=self.su, timeout=5)
             if build_prop:
                 build_prop = build_prop.split('\n')
                 props = [
@@ -122,33 +120,34 @@ class ChainExecution:
 
         # WIFI
         with suppress(TimeoutError):
-            _wifi = self.adb('shell dumpsys wifi', timeout=5)
+            _wifi = self.adb.adb_out('dumpsys wifi', timeout=5)
             if _wifi:
                 self.REPORT['wifi mac'] = get_wifi(_wifi.split('\n'))
 
         # IMEI
         with suppress(TimeoutError):
-            _usbinfo = self.adb('shell dumpsys iphonesubinfo', timeout=5)
+            _usbinfo = self.adb.adb_out('dumpsys iphonesubinfo', timeout=5)
             if _usbinfo:
                 self.REPORT['imei'] = get_prop(_usbinfo.split('\n'), 'Device ID')
 
         # IMEI for Android v6+
         # with suppress(TimeoutError):
         #     rex = re.compile(b' ([0-9a-f]{8})')
-        #     _data = self.adb('adb shell service call iphonesubinfo 1', timeout=2)
+        #     _data = self.adb.adb_out('service call iphonesubinfo 1', timeout=2)
         #     if _data and len(_data) > 9:
         #         plen = int(b''.join(_data[:2]), 16)
 
         # Time
         with suppress(TimeoutError):
             self.REPORT['local_time'] = time.strftime('%Y-%m-%d %H:%M:%S %Z')
-            rtime = self.adb(['shell', 'date', r'+%F\ %T\ %Z'], timeout=5)
+            rtime = self.adb.adb_out(r"date '+%F\ %T\ %Z'", timeout=5)
+            rtime = rtime.replace('\\', '')
             self.REPORT['device_time'] = rtime.split(self.adb.rmr.decode())[-1]
 
         # SIM Card
         with suppress(TimeoutError, Exception):
-            if self.adb.exists('/data/system/SimCard.dat'):
-                _simdat = self.adb('shell cat /data/system/SimCard.dat', su=self.su, timeout=5)
+            if self.adb.exists('/data/system/SimCard.dat', su=self.su):
+                _simdat = self.adb.adb_out('cat /data/system/SimCard.dat', su=self.su, timeout=5)
                 sims = [
                     'CurrentSimSerialNumber',
                     'CurrentSimPhoneNumber',
@@ -162,7 +161,7 @@ class ChainExecution:
 
         # Accounts
         with suppress(TimeoutError):
-            _acc = self.adb('shell dumpsys account', timeout=5)
+            _acc = self.adb.adb_out('dumpsys account', timeout=5)
             self.REPORT['accounts'] = get_accounts(_acc)
 
     @staticmethod
@@ -263,7 +262,7 @@ class ChainExecution:
             self.DOWNLOADS.append(fn)
 
     def get_targets(self):
-        self.targets = [*map(pathlib.PurePath, self.registry.get_posix_links)]
+        self.targets = [*map(pathlib.PurePath, self.registry.get_posix_links())]
 
     def in_targets(self, target):
         if not self.targets:
@@ -303,7 +302,7 @@ class ChainExecution:
                 self.update('Acquiring shared storage...')
                 self.do_backup(ALL=False, shared=True, backup_name='shared.ab')
             self.update('Acquiring databases via root...')
-            for file_path in self.registry.get_root_links:
+            for file_path in self.registry.get_root_links():
                 self.download_file(file_path)
         elif run_backup or self.permisson == self.USER:
             self.do_backup(shared=shared)
@@ -316,7 +315,7 @@ class ChainExecution:
         if self.backup:
             self.AndroidBackupToTar()
         if self.tarfile:
-            targets = self.registry.get_all_links
+            targets = self.registry.get_all_links()
             # Perhaps change to posix links?
             self.ExtractFromTar(targets=targets)
         # if self.DataStore and self.DataStore.members:

@@ -1,7 +1,7 @@
 __pycache__/
 build/
 dist/
-env/
+env*/
 *.egg-info
 *.py[coxd]
 *.log
@@ -13,3 +13,5 @@ htmlcov/
 .pytest_cache
 .vscode
 .idea
+*.code-workspace
+tests_live/

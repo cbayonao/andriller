@@ -2,7 +2,6 @@
 
 import sys
 import json
-import glob
 import struct
 import string
 import shutil
@@ -53,6 +52,7 @@ class TextFieldHandler(logging.Handler):
             self.tk_obj.insert('end', f'{log}\n')
             self.tk_obj.see('end')
         except Exception:
+            # with contextlib.suppress(Exception):
             self.handleError(record)
 
 
@@ -173,8 +173,7 @@ class MainWindow(BaseWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_title()
-        # ADB moved to the bottom once the logger handler is configured
-        # self.adb = adb_conn.ADBConn(logger=logger, log_level=self.log_level)
+        self.adb = adb_conn.ADBConn()
         self.registry = decoders.Registry()
         self.menubar = tk.Menu(self.root, tearoff=0)
         self.root['menu'] = self.menubar
@@ -269,7 +268,7 @@ class MainWindow(BaseWindow):
         # Text Field + logger
         self.TF = tk.Text(
             textframe, font=self.FontMono, wrap=tk.WORD, width=65,
-            bg='white', height=self.conf('window_size'))
+            height=self.conf('window_size'))
         self.TF.bind('<Button-3>', rClicker, add='')
         self.TF.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.set_logger()
@@ -302,9 +301,9 @@ class MainWindow(BaseWindow):
         logger.info(f"Time in reports:  {self.time_now_configured} <--")  # \u2190
         self.conf.check_latest_version(logger=self.logger)
 
-        # Setup ADB
-        # def setup_adb(self):
-        self.adb = adb_conn.ADBConn(logger=logger, log_level=self.log_level)
+        # Setup ADB logging
+        # do not pass self.logger as the logger, as the logger's lifetime is shorter, and is not reliable.
+        self.adb.setup_logging(log_level=self.log_level)
 
     @property
     def time_now_local(self):
@@ -379,8 +378,9 @@ class MainWindow(BaseWindow):
         self.menubar.add_cascade(menu=menu_help, label='Help', underline=0)
         menu_help.add_command(label='Visit website')
         menu_help.add_separator()
-        menu_help.add_command(label='Run Update', command=lambda: self.conf.upgrade_package(logger=self.logger))
-        menu_help.add_separator()
+        if not getattr(sys, 'frozen', False):
+            menu_help.add_command(label='Run Update', command=lambda: self.conf.upgrade_package(logger=self.logger))
+            menu_help.add_separator()
         menu_help.add_command(label='About', command=self.about_msg)
 
     def build_adb_menus(self):
@@ -612,7 +612,8 @@ class MainWindow(BaseWindow):
 # WhatsApp Crypt --------------------------------------------------------------
 class WhatsAppCrypt(BaseWindow):
     KEY_SIZE = decrypts.WhatsAppCrypt.KEY_SIZE
-    SUFFIX = decrypts.WhatsAppCrypt.SUFFIX
+    DECODED_DIR = decrypts.WhatsAppCrypt.DECODED_DIR
+    DECODED_EXT = decrypts.WhatsAppCrypt.DECODED_EXT
 
     def __init__(self, root=None, title='WhatsApp Crypt Decryptor'):
         super().__init__(root=root, title=title)
@@ -688,12 +689,12 @@ class WhatsAppCrypt(BaseWindow):
     def check_dir(self):
         self.crypts.clear()
         self.file_box.delete(*self.file_box.get_children())
-        path_ = os.path.join(self.work_dir, '*.crypt*')
-        for f in glob.iglob(path_):
-            done = os.path.exists(f'{os.path.splitext(f)[0]}{self.SUFFIX}')
+        path_ = pathlib.Path(self.work_dir)
+        for f in path_.glob('*.crypt*'):
+            done = f.parent.joinpath(self.DECODED_DIR, f'{f.name}{self.DECODED_EXT}').exists()
             size = human_bytes(os.path.getsize(f))
-            item = self.file_box.insert('', tk.END, text=os.path.basename(f), values=[size, done])
-            self.crypts[item] = f
+            item = self.file_box.insert('', tk.END, text=f.name, values=[size, done])
+            self.crypts[item] = str(f)
 
     def tree_update(self, iid, values):
         self.file_box.item(iid, values=values)
@@ -708,6 +709,7 @@ class WhatsAppCrypt(BaseWindow):
             messagebox.showwarning('No selection made', 'Select at least one database to decrypt.')
         self.run_decrypt(sel)
 
+    @threaded
     def run_decrypt(self, sel):
         try:
             self.controls_state(tk.DISABLED)
@@ -718,7 +720,10 @@ class WhatsAppCrypt(BaseWindow):
                 decrypter = self.supported.get(file_ext)
                 if decrypter:
                     try:
-                        wadec = decrypter(file_, self.key_file)
+                        wadec = decrypter(
+                            pathlib.Path(file_),
+                            pathlib.Path(self.key_file)
+                        )
                         if wadec.decrypt():
                             vals = self.file_box.item(i)['values']
                             vals[1] = True
@@ -729,7 +734,7 @@ class WhatsAppCrypt(BaseWindow):
                         self.file_box.item(i, tags='failure')
                         messagebox.showerror('WhatsApp decryption error', str(err))
                     except Exception as err:
-                        logger.error(f'WhatsAppCrypt: {fname}: {err}')
+                        logger.exception(f'WhatsAppCrypt: {fname}: {err}')
                         self.file_box.item(i, tags='failure')
         finally:
             self.file_box.selection_set()
